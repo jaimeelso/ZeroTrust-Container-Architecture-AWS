@@ -1,0 +1,110 @@
+##
+ # Copyright (c) Jaime Elso de Blas (https://jaimeelso.com)
+ # Follow me on X: @jaimeelso https://x.com/jaimeelso
+ # Check out my Github: https://github.com/jaimeelso
+ # This code is licensed under the MIT license.
+ # Created on: 15/12/2023
+ #
+ # Version 1.0 Create roles and policies for the project
+ # Description: Create roles and policies for the project
+##
+
+Description: >
+  This CloudFormation template sets up the necessary IAM roles and policies for your project. 
+  It creates a Task Execution Role for Amazon ECS tasks, allowing them to make AWS API calls 
+  on your behalf. The role is granted permissions to pull Docker images from Amazon ECR. This setup 
+  ensures that your ECS tasks have the necessary permissions to operate effectively and securely.
+
+Parameters:
+  ProjectName:
+    Description: A project name that will be prefixed to resource names
+    Type: String
+    Default: ZeroTrust
+
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+    Default: Dev
+
+  LogGroupName:
+    Description: The name of the CloudWatch log group
+    Type: String
+
+Resources:
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 
+                - ecs-tasks.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:*
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Path: /
+      Policies:
+        - PolicyName: !Sub ${ProjectName}-${EnvironmentName}-ECSTaskExecutionRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: PullDockerImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: WriteLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroupName}:*
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName} ${EnvironmentName} Task Execution Role
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 
+                - ecs-tasks.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:*
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Path: /
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName} ${EnvironmentName} Task Role
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+Outputs:
+  TaskExecutionRole:
+    Description: The ARN of the task execution role
+    Value: !GetAtt TaskExecutionRole.Arn
+
+  TaskRole:
+    Description: The ARN of the task role
+    Value: !GetAtt TaskRole.Arn

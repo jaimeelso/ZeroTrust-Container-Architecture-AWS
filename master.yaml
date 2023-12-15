@@ -1,0 +1,123 @@
+Description: >
+
+  This template deploys a VPC, with a pair of public and private subnets spread 
+  across two Availabilty Zones. It deploys an Internet Gateway, with a default 
+  route on the public subnets. It deploys four Endpoints, in the private subnets
+  for private access to Amazon Container Registry (Amazon ECR) and Amazon CloudWatch Logs.
+
+  It then deploys a highly available ECS cluster using Fargate, with 
+  ECS hosts distributed across multiple Availability Zones. 
+
+  Finally, it deploys a example ECS service from containers published in 
+  Amazon Container Registry (Amazon ECR).
+
+  Last Modified: 15 December 2023
+  Author: Jaime Elso de Blas (https://jaimeelso.com)
+
+Parameters:
+  NetworkingS3URL:
+    Type: String
+    Description: S3 URL for the Networking template.
+  PermissionsS3URL:
+    Type: String
+    Description: S3 URL for the Permissions template.
+  SecurityS3URL:
+    Type: String
+    Description: S3 URL for the Security template.
+  EndpointsS3URL:
+    Type: String
+    Description: S3 URL for the Endpoints template.
+  BalancerS3URL:
+    Type: String
+    Description: S3 URL for the Balancer template.
+  ContainersS3URL:
+    Type: String
+    Description: S3 URL for the Containers template.
+  CloudWatchLogGroupName:
+    Type: String
+    Description: CloudWatch Log Group Name.
+  ECRImageURI:
+    Type: String
+    Description: ECR Image URI.
+  CertificateArn:
+    Type: String
+    Description: Certificate ARN.
+
+Resources:
+  Networking:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref NetworkingS3URL
+      Parameters:
+        ProjectName: !Ref AWS::StackName
+        EnvironmentName: Dev
+        VpcCIDR: 10.0.0.0/16
+        PublicSubnet1CIDR: 10.0.0.0/24
+        PublicSubnet2CIDR: 10.0.1.0/24
+        PrivateSubnet1CIDR: 10.0.2.0/24
+        PrivateSubnet2CIDR: 10.0.3.0/24
+
+  Permissions:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref PermissionsS3URL
+      Parameters:
+        ProjectName: !Ref AWS::StackName
+        EnvironmentName: Dev
+        LogGroupName: !Ref CloudWatchLogGroupName
+
+  Security:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref SecurityS3URL
+      Parameters:
+        ProjectName: !Ref AWS::StackName
+        EnvironmentName: Dev
+        PublicSubnet1CIDR: 10.0.0.0/24
+        PublicSubnet2CIDR: 10.0.1.0/24
+        PrivateSubnet1CIDR: 10.0.2.0/24
+        PrivateSubnet2CIDR: 10.0.3.0/24
+        VPC: !GetAtt Networking.Outputs.VPC
+        PublicSubnets: !GetAtt Networking.Outputs.PublicSubnets
+        PrivateSubnets: !GetAtt Networking.Outputs.PrivateSubnets
+        S3PrefixListId: pl-6da54004 # Prefix List for S3 on Ireland region, modify if you are using another region
+
+  Endpoints:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref EndpointsS3URL
+      Parameters:
+        VPC: !GetAtt Networking.Outputs.VPC
+        PrivateSubnets: !GetAtt Networking.Outputs.PrivateSubnets
+        InterfaceEndpointSecurityGroup: !GetAtt Security.Outputs.InterfaceEndpointSecurityGroup
+        TaskExecutionRole: !GetAtt Permissions.Outputs.TaskExecutionRole
+        PrivateRouteTable: !GetAtt Networking.Outputs.PrivateRouteTable
+        CloudWatchLogGroupName: !Ref CloudWatchLogGroupName
+
+  Balancer:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref BalancerS3URL
+      Parameters:
+        ProjectName: !Ref AWS::StackName
+        EnvironmentName: Dev
+        VPC: !GetAtt Networking.Outputs.VPC
+        BalancerSecurityGroup: !GetAtt Security.Outputs.BalancerSecurityGroup
+        PublicSubnets: !GetAtt Networking.Outputs.PublicSubnets
+        CertificateArn: !Ref CertificateArn
+
+  Containers:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref ContainersS3URL
+      Parameters:
+        ProjectName: !Ref AWS::StackName
+        EnvironmentName: Dev
+        ContainerImageURI: !Ref ECRImageURI
+        LogGroupName: !Ref CloudWatchLogGroupName 
+        VPC: !GetAtt Networking.Outputs.VPC
+        TaskExecutionRole: !GetAtt Permissions.Outputs.TaskExecutionRole
+        TaskRole: !GetAtt Permissions.Outputs.TaskRole
+        TaskSecurityGroup: !GetAtt Security.Outputs.TaskSecurityGroup
+        PrivateSubnets: !GetAtt Networking.Outputs.PrivateSubnets
+        BalancerTargetGroup: !GetAtt Balancer.Outputs.BalancerTargetGroup

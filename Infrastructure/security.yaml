@@ -1,0 +1,522 @@
+##
+ # Copyright (c) Jaime Elso de Blas (https://jaimeelso.com)
+ # Follow me on X: @jaimeelso https://x.com/jaimeelso
+ # Check out my Github: https://github.com/jaimeelso
+ # This code is licensed under the MIT license.
+ # Created on: 15/12/2023
+ #
+ # Version 1.0 Create security groups and ACLs for the project
+ # Description: Create security groups and ACLs for the project
+##
+
+Description: >
+  This CloudFormation template sets up the necessary security groups and network access control lists (ACLs) for your project. 
+  The security groups control inbound and outbound traffic. The template also sets up network ACLs for your subnets, providing 
+  a second layer of security. This setup ensures that your network resources are protected from unauthorized access.
+
+Parameters:
+  ProjectName:
+    Description: A project name that will be prefixed to resource names
+    Type: String
+    Default: ZeroTrust
+
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+    Default: Dev
+
+  PublicSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.0.0/24
+
+  PublicSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+    Type: String
+    Default: 10.0.1.0/24
+
+  PrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.2.0/24
+
+  PrivateSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.0.3.0/24
+
+  VPC:
+    Type: AWS::EC2::VPC::Id
+    Description: Choose which VPC the security groups should be deployed to
+
+  PublicSubnets:
+    Description: Subnets to asign the Network ACL
+    Type: List<AWS::EC2::Subnet::Id>
+
+  PrivateSubnets:
+    Description: Subnets to asign the Network ACL
+    Type: List<AWS::EC2::Subnet::Id>
+
+  S3PrefixListId:
+    Description: Prefix list ID for S3 Gateway Endpoint
+    Type: String
+
+Resources:
+  InterfaceEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow access the HTTPS API endpoints called from the private subnets
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref PrivateSubnet1CIDR
+          Description: Allow access the HTTPS API endpoints called from the private subnets
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref PrivateSubnet2CIDR
+          Description: Allow access the HTTPS API endpoints called from the private subnets
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 1
+          ToPort: 1
+          CidrIp: 0.0.0.0/32
+          Description:  Rule to delete default outbound rule
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName} ${EnvironmentName} Interface Endpoint Security Group
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  BalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound HTTP traffic from the Internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow inbound HTTP traffic from the Internet
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: Allow inbound HTTPS traffic from the Internet
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: !Ref PrivateSubnet1CIDR
+          Description: Allow outbound traffic to the ECS tasks
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: !Ref PrivateSubnet2CIDR
+          Description: Allow outbound traffic to the ECS tasks
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName} ${EnvironmentName} Balancer Security Group
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref BalancerSecurityGroup
+          Description: Allow inbound traffic from the Balancer
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationPrefixListId: !Ref S3PrefixListId
+          Description: Allow outbound traffic to S3 Gateway Endpoint
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationSecurityGroupId: !Ref InterfaceEndpointSecurityGroup
+          Description: Allow outbound traffic to the DKR, ECR APU and Losg Interface Endpoints
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName} ${EnvironmentName} Task Security Group
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PublicSubnetNetworkACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName} ${EnvironmentName} Public Subnet Network ACL
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PublicSubnetNetworkACLInboundEntry1:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicSubnetNetworkACL
+      RuleNumber: 100
+      Protocol: 6
+      PortRange:
+        From: 80
+        To: 80
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+
+  PublicSubnetNetworkACLInboundEntry2:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicSubnetNetworkACL
+      RuleNumber: 110
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref PrivateSubnet1CIDR
+
+  PublicSubnetNetworkACLInboundEntry3:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicSubnetNetworkACL
+      RuleNumber: 120
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref PrivateSubnet2CIDR
+
+  PublicSubnetNetworkACLInboundEntry4:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicSubnetNetworkACL
+      RuleNumber: 130
+      Protocol: 6
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+
+  PublicSubnetNetworkACLOutboundEntry1:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicSubnetNetworkACL
+      RuleNumber: 100
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 0.0.0.0/0
+
+  PublicSubnetNetworkACLOutboundEntry2:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicSubnetNetworkACL
+      RuleNumber: 110
+      Protocol: 6
+      PortRange:
+        From: 3000
+        To: 3000
+      RuleAction: allow
+      Egress: true
+      CidrBlock: !Ref PrivateSubnet1CIDR
+
+  PublicSubnetNetworkACLOutboundEntry3:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicSubnetNetworkACL
+      RuleNumber: 120
+      Protocol: 6
+      PortRange:
+        From: 3000
+        To: 3000
+      RuleAction: allow
+      Egress: true
+      CidrBlock: !Ref PrivateSubnet2CIDR
+
+  PublicSubnetNetworkACLAssociation1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Select [0, !Ref PublicSubnets]
+      NetworkAclId: !Ref PublicSubnetNetworkACL
+
+  PublicSubnetNetworkACLAssociation2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Select [1, !Ref PublicSubnets]
+      NetworkAclId: !Ref PublicSubnetNetworkACL
+
+  PrivateSubnetNetworkACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName} ${EnvironmentName} Private Subnet Network ACL
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # Private subnets hosting ECS tasks should allow inbound/outbound traffic to specific S3 IPs' CIDR. 
+  # When using an S3 Gateway Endpoint, there is a prefix list with these CIDRs. 
+  # This CIDR varies by region and requires manual Network ACL rule adjustments.
+
+  PrivateSubnetNetworkACLInboundEntry1:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 100
+      Protocol: 6
+      PortRange:
+        From: 3000
+        To: 3000
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref PublicSubnet1CIDR
+    
+  PrivateSubnetNetworkACLInboundEntry2:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 110
+      Protocol: 6
+      PortRange:
+        From: 3000
+        To: 3000
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref PublicSubnet2CIDR
+
+  PrivateSubnetNetworkACLInboundEntry3:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 120
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 18.34.240.0/22
+
+  PrivateSubnetNetworkACLInboundEntry4:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 130
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 18.34.32.0/20
+
+  PrivateSubnetNetworkACLInboundEntry5:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 140
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 3.5.64.0/21
+
+  PrivateSubnetNetworkACLInboundEntry6:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 150
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 3.5.72.0/23
+
+  PrivateSubnetNetworkACLInboundEntry7:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 160
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 52.218.0.0/17
+
+  PrivateSubnetNetworkACLInboundEntry8:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 170
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 52.92.0.0/17
+
+  PrivateSubnetNetworkACLOutboundEntry1:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 100
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: true
+      CidrBlock: !Ref PublicSubnet1CIDR
+
+  PrivateSubnetNetworkACLOutboundEntry2:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 110
+      Protocol: 6
+      PortRange:
+        From: 1024
+        To: 65535
+      RuleAction: allow
+      Egress: true
+      CidrBlock: !Ref PublicSubnet2CIDR
+
+  PrivateSubnetNetworkACLOutboundEntry3:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 120
+      Protocol: 6
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 18.34.240.0/22
+
+  PrivateSubnetNetworkACLOutboundEntry4:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 130
+      Protocol: 6
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 18.34.32.0/20
+
+  PrivateSubnetNetworkACLOutboundEntry5:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 140
+      Protocol: 6
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 3.5.64.0/21
+
+  PrivateSubnetNetworkACLOutboundEntry6:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 150
+      Protocol: 6
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 3.5.72.0/23
+
+  PrivateSubnetNetworkACLOutboundEntry7:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 160
+      Protocol: 6
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 52.218.0.0/17
+
+  PrivateSubnetNetworkACLOutboundEntry8:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+      RuleNumber: 170
+      Protocol: 6
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 52.92.0.0/17
+
+  PrivateSubnetNetworkACLAssociation1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Select [0, !Ref PrivateSubnets]
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+
+  PrivateSubnetNetworkACLAssociation2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Select [1, !Ref PrivateSubnets]
+      NetworkAclId: !Ref PrivateSubnetNetworkACL
+
+Outputs:
+  InterfaceEndpointSecurityGroup:
+    Description: The ID of the security group for the interface endpoint
+    Value: !Ref InterfaceEndpointSecurityGroup
+
+  BalancerSecurityGroup:
+    Description: The ID of the security group for the load balancer
+    Value: !Ref BalancerSecurityGroup
+
+  TaskSecurityGroup:
+    Description: The ID of the security group for the ECS tasks
+    Value: !Ref TaskSecurityGroup

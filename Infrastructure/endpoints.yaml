@@ -1,0 +1,129 @@
+##
+ # Copyright (c) Jaime Elso de Blas (https://jaimeelso.com)
+ # Follow me on X: @jaimeelso https://x.com/jaimeelso
+ # Check out my Github: https://github.com/jaimeelso
+ # This code is licensed under the MIT license.
+ # Created on: 15/12/2023
+ #
+ # Version 1.0 Create VPC Endpoints
+ # Description: Create VPC Endpoints
+##
+
+Description: >
+  This CloudFormation template creates VPC Endpoints for secure, private 
+  connectivity between your VPC and AWS services. It sets up an Interface 
+  Endpoint for Amazon ECR, allowing your ECS tasks to pull Docker images 
+  securely. The endpoints are deployed to a specified VPC, private subnets, 
+  and security group. The template also includes a policy to allow a specified 
+  IAM role to pull Docker images. This setup enhances the security and 
+  efficiency of your network traffic by keeping it within the AWS network.
+
+Parameters:
+  VPC:
+    Type: AWS::EC2::VPC::Id
+    Description: Choose which VPC the security groups should be deployed to
+
+  PrivateSubnets:
+    Description: Choose which subnets the Interfaces Endpoints should be deployed to
+    Type: List<AWS::EC2::Subnet::Id>
+
+  InterfaceEndpointSecurityGroup:
+    Description: Choose which security group the Interfaces Endpoints should be deployed to
+    Type: AWS::EC2::SecurityGroup::Id
+
+  TaskExecutionRole:
+    Description: Choose which Rolex the Interfaces Endpoints Document Policy should allow access to
+    Type: String
+
+  PrivateRouteTable:
+    Description: Choose which route table has a rule to the Gateway Endpoint
+    Type: String
+
+  CloudWatchLogGroupName:
+    Description: CloudWatch Log Group Name
+    Type: String
+
+Resources:
+  DKRInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+      SubnetIds: !Ref PrivateSubnets
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.dkr
+      SecurityGroupIds:
+        - !Ref InterfaceEndpointSecurityGroup
+      PrivateDnsEnabled: true
+      PolicyDocument:
+        Statement:
+          - Sid: PullDockerImage
+            Effect: Allow
+            Principal:
+              AWS: !Ref TaskExecutionRole
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+              - ecr:GetAuthorizationToken
+            Resource: '*'
+
+  ECRInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+      SubnetIds: !Ref PrivateSubnets
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.api
+      SecurityGroupIds:
+        - !Ref InterfaceEndpointSecurityGroup
+      PrivateDnsEnabled: true
+      PolicyDocument:
+        Statement:
+          - Sid: PullDockerImage
+            Effect: Allow
+            Principal:
+              AWS: !Ref TaskExecutionRole
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+              - ecr:GetAuthorizationToken
+            Resource: '*'
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+      PolicyDocument:
+        Statement:
+          - Sid: AccessToSpecificBucketOnly
+            Effect: Allow
+            Principal: '*'
+            Action:
+              - s3:GetObject
+            Resource: 
+              - !Sub arn:aws:s3:::prod-${AWS::Region}-starport-layer-bucket/*
+
+  LogsInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+      SubnetIds: !Ref PrivateSubnets
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.logs
+      SecurityGroupIds:
+        - !Ref InterfaceEndpointSecurityGroup
+      PrivateDnsEnabled: true
+      PolicyDocument:
+        Statement:
+          - Sid: PutOnly
+            Effect: Allow
+            Principal:
+              AWS: !Ref TaskExecutionRole
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${CloudWatchLogGroupName}:*

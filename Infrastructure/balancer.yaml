@@ -1,0 +1,100 @@
+##
+ # Copyright (c) Jaime Elso de Blas (https://jaimeelso.com)
+ # Follow me on X: @jaimeelso https://x.com/jaimeelso
+ # Check out my Github: https://github.com/jaimeelso
+ # This code is licensed under the MIT license.
+ # Created on: 15/12/2023
+ #
+ # Version 1.0 Create ALB
+ # Description: Creates an ALB 
+##
+
+Description: >
+  This CloudFormation template creates an Application Load Balancer (ALB) 
+  designed to balance HTTPS traffic across multiple ECS containers. The ALB automatically 
+  scales its request handling capacity in response to incoming traffic.
+
+Parameters:
+  ProjectName:
+    Description: A project name that will be prefixed to resource names
+    Type: String
+    Default: ZeroTrust
+
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+    Default: Dev
+
+  VPC:
+    Type: AWS::EC2::VPC::Id
+    Description: Choose which VPC the security groups should be deployed to
+
+  BalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Choose which security group the ALB should be deployed to
+
+  PublicSubnets:
+    Description: Choose which subnets the Balancer should be deployed to
+    Type: List<AWS::EC2::Subnet::Id>
+  
+  CertificateArn:
+    Description: Choose which certificate the ALB should use
+    Type: String
+
+Resources:
+  Balancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: !Ref ProjectName
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref BalancerSecurityGroup
+      Subnets: !Ref PublicSubnets
+      Type: application
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName} ${EnvironmentName} Balancer
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  BalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref BalancerTargetGroup
+      LoadBalancerArn: !Ref Balancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+
+  BalancerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: TaskTargetGroup
+      Port: 3000
+      Protocol: HTTPS
+      ProtocolVersion: HTTP1
+      VpcId: !Ref VPC
+      TargetType: ip
+      HealthCheckProtocol: HTTPS
+      HealthCheckPort: 3000
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: 200-299
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName} ${EnvironmentName} Balancer Target Group
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+Outputs:
+  BalancerTargetGroup:
+    Description: The ARN of the ALB target group
+    Value: !Ref BalancerTargetGroup
