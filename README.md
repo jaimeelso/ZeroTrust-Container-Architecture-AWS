@@ -2,6 +2,8 @@
 
 This repository provides infrastructure as code to deploy containers securely on AWS using a Zero Trust architecture. Zero Trust is a network security philosophy based on the premise of not trusting any element of the network, both external and internal. Inspired by this approach, not only for the network but for all elements of the infrastructure, this repository provides infrastructure as code to deploy the architecture shown in the following diagram.
 
+You can check the article on my website that explains the entire project [here](https://jaimeelso.com/post/zero-trust-architecture-for-ecs).
+
 ![Architecture diagram](Diagram.png)
 
 ## Prerequisites
